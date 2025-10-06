@@ -26,6 +26,26 @@ import java.util.stream.Collectors;
 import static fr.umlv.smalljs.rt.JSObject.UNDEFINED;
 import static java.util.stream.Collectors.joining;
 
+
+/*
+    1. Before starting, explain to yourself how "switch on types" in the method visit of ASTInterpreter.java works ?
+    How to "return" a value from a case ?
+    How to call it, how to do a recursive call ?
+
+    - Either throw something, or return with -> or -> { ... yield } for several lines
+    - Call it with an expression to visit, and the environment which contains the variables
+
+    2. The file ASTInterpreterTest contains several unit tests for all the following questions.
+    Now, we want to implement the AST interpreter when there is a constant String (a literal).
+    What is the class of the corresponding node in the AST (you can take a look to the file smalljs.md for a summary).
+    How to implement it ?
+    Is it enough to make test marked Q2 pass ? what other node should be implemented too ?
+
+    - It's Literal. It's not enough for Q2, we also need the Block
+
+X
+ */
+
 public final class ASTInterpreter {
   private static JSObject asJSObject(Object value, int lineNumber) {
     if (!(value instanceof JSObject jsObject)) {
@@ -67,56 +87,112 @@ public final class ASTInterpreter {
   static Object visit(Expr expression, JSObject env) {
     return switch (expression) {
       case Block(List<Expr> exprs, int lineNumber) -> {
-        if (true) {
-          throw new UnsupportedOperationException("TODO Block");
+        for (var expr: exprs) {
+          visit(expr, env);
         }
-        // TODO loop over all instructions
         yield UNDEFINED;
       }
-      case Literal(Object value, int lineNumber) -> {
-        throw new UnsupportedOperationException("TODO Literal");
-      }
+      case Literal(Object value, int lineNumber) -> value;
       case Call(Expr qualifier, List<Expr> args, int lineNumber) -> {
-        throw new UnsupportedOperationException("TODO Call");
+        var mayBeFunction = visit(qualifier, env);
+        var function = asJSObject(mayBeFunction, lineNumber);
+        var arguments = args.stream()
+                        .map(arg -> visit(arg, env))
+                                .toArray();
+        yield function.invoke(UNDEFINED, arguments);
       }
       case Identifier(String name, int lineNumber) -> {
-        throw new UnsupportedOperationException("TODO Identifier");
+        var value = env.lookupOrDefault(name, null);
+        if (value == null) {
+          throw new Failure("at line " + lineNumber + ", variable " + name + " is not defined");
+        }
+        yield value;
       }
-      case VarAssignment(String name, Expr expr, boolean declaration, int lineNumber) -> {
-        throw new UnsupportedOperationException("TODO VarAssignment");
+      case VarAssignment(String name, Expr expr, _, int lineNumber) -> {
+        var value = visit(expr, env);
+        var oldValue = env.lookupOrDefault(name, null);
+        if (oldValue == null) {
+          throw new Failure("at line " + lineNumber + ", variable " + name + " is not defined");
+        }
+        env.register(name, value);
+        yield value;
       }
       case Fun(String name, List<String> parameters, boolean toplevel, Block body, int lineNumber) -> {
-				throw new UnsupportedOperationException("TODO Fun");
-        //Object.Invoker invoker = new Object.Invoke() {
-        //  @Override
-        //  public Object invoke(Object receiver, Object... args) {
-        //    // check the arguments length
-        //    // create a new environment
-        //    // add this and all the parameters
-        //    // execute the body
-        //  }
-        //};
-        // create the JS function with the invoker
-        // register it into the global env if it's a toplevel
-        // yield the function
+        JSObject.Invoker invoker = new JSObject.Invoker() {
+          @Override
+          public Object invoke(Object receiver, Object... args) {
+            // check the arguments length
+            if (args.length != parameters.size()) {
+              throw new Failure("at line " + lineNumber + ", function " + name + " called with " + args.length + " arguments, expected " + parameters.size());
+            }
+            // create a new environment
+            var newEnv = JSObject.newEnv(env);
+            // add this and all the parameters
+            newEnv.register("this", receiver);
+            for (var i = 0; i < parameters.size(); i++) {
+              newEnv.register(parameters.get(i), args[i]);
+            }
+            // execute the body
+            try {
+              execute(body, newEnv);
+            } catch (ReturnError error) {
+              return error.getValue();
+            }
+            return UNDEFINED;
+          }
+        };
+//         create the JS function with the invoker
+        var function = JSObject.newFunction(name, invoker);
+//         register it into the global env if it's a toplevel
+        if (toplevel) {
+          env.register(name, function);
+        }
+//         yield the function
+        yield function;
       }
       case Return(Expr expr, int lineNumber) -> {
-				throw new UnsupportedOperationException("TODO Return");
+        var value = visit(expr, env);
+        throw new ReturnError(value);
       }
       case If(Expr condition, Block trueBlock, Block falseBlock, int lineNumber) -> {
-				throw new UnsupportedOperationException("TODO If");
+        var value = visit(condition, env);
+        if (value instanceof Integer conditionInt && conditionInt == 0) {
+          visit(falseBlock, env);
+        } else {
+          visit(trueBlock, env);
+        }
+        yield UNDEFINED;
       }
       case ObjectLiteral(Map<String, Expr> initMap, int lineNumber) -> {
-				throw new UnsupportedOperationException("TODO ObjectLiteral");
+        var obj = JSObject.newObject(null);
+        initMap.forEach((k, v) -> {
+          var value = visit(v, env);
+          obj.register(k, value);
+        });
+
+        yield obj;
       }
       case FieldAccess(Expr receiver, String name, int lineNumber) -> {
-        throw new UnsupportedOperationException("TODO FieldAccess");
+        var obj = asJSObject(visit(receiver, env), lineNumber);
+
+        yield obj.lookupOrDefault(name, UNDEFINED);
       }
       case FieldAssignment(Expr receiver, String name, Expr expr, int lineNumber) -> {
-        throw new UnsupportedOperationException("TODO FieldAssignment");
+        var obj = asJSObject(visit(receiver, env), lineNumber);
+        obj.register(name, expr);
+
+        yield obj;
       }
       case MethodCall(Expr receiver, String name, List<Expr> args, int lineNumber) -> {
-        throw new UnsupportedOperationException("TODO MethodCall");
+        var obj = asJSObject(visit(receiver, env), lineNumber);
+        var mayBeMethod = obj.lookupOrDefault(name, null);
+        if (!(mayBeMethod instanceof JSObject method)) {
+          throw new Failure("at line " + lineNumber + ", " + name + " is not a method");
+        }
+        var arguments = args.stream()
+                .map(arg -> visit(arg, env))
+                .toArray();
+        yield method.invoke(obj, arguments);
       }
     };
   }
@@ -145,7 +221,7 @@ public final class ASTInterpreter {
   }
 
   public static void interpret(Script script, PrintStream outStream) {
-    var globalEnv = createGlobalEnv(outStream);
+    var globalEnv =createGlobalEnv(outStream);
     var body = script.body();
     execute(body, globalEnv);
   }
