@@ -46,7 +46,6 @@ public class StackInterpreterInstrTests {
 		return outStream.toString(UTF_8).replace("\r\n", "\n");
 	}
 
-	/*
 	@Nested
   public class Q2 {
 		@Test
@@ -339,8 +338,8 @@ public class StackInterpreterInstrTests {
 	public class Q9 {
 		@Test
 		public void printAnUndefindeVariable() {
-			// print(a);
-			// var a = 2;
+//			 print(a);
+//			 var a = 2;
 			var dict = new Dictionary();
 			int[] instrs = {
 					LOAD, 1,
@@ -1169,6 +1168,7 @@ public class StackInterpreterInstrTests {
 		}
 	}
 
+	/*
 	@Nested
 	public class Q16 {
 		@Test
