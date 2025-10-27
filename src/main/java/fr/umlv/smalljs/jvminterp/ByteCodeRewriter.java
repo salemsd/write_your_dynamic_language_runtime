@@ -15,7 +15,6 @@ import java.util.Map;
 
 import fr.umlv.smalljs.rt.Failure;
 import org.objectweb.asm.*;
-import org.objectweb.asm.util.CheckClassAdapter;
 
 import fr.umlv.smalljs.ast.Expr;
 import fr.umlv.smalljs.ast.Expr.Block;
@@ -31,6 +30,7 @@ import fr.umlv.smalljs.ast.Expr.ObjectLiteral;
 import fr.umlv.smalljs.ast.Expr.Return;
 import fr.umlv.smalljs.ast.Expr.VarAssignment;
 import fr.umlv.smalljs.rt.JSObject;
+import org.objectweb.asm.util.CheckClassAdapter;
 
 public final class ByteCodeRewriter {
   static JSObject createFunction(String name, List<String> parameters, Block body, JSObject global) {
@@ -38,7 +38,7 @@ public final class ByteCodeRewriter {
 
     env.register("this", 0);
     for (String parameter : parameters) {
-        env.register(parameter, env.length());
+      env.register(parameter, env.length());
     }
     var parameterCount = env.length();
     visitVariable(body, env);
@@ -54,7 +54,7 @@ public final class ByteCodeRewriter {
     mv.visitCode();
 
     //initialize local variables to undefined by default
-    for(var i = parameterCount; i < localVariableCount; i++) {
+    for (var i = parameterCount; i < localVariableCount; i++) {
       mv.visitLdcInsn(new ConstantDynamic("undefined", "Ljava/lang/Object;", BSM_UNDEFINED));
       mv.visitVarInsn(ASTORE, i);
     }
@@ -75,9 +75,9 @@ public final class ByteCodeRewriter {
 
     MethodHandle mh;
     try {
-        mh = MethodHandles.lookup().findStatic(type, name, methodType);
+      mh = MethodHandles.lookup().findStatic(type, name, methodType);
     } catch (NoSuchMethodException | IllegalAccessException e) {
-        throw new AssertionError(e);
+      throw new AssertionError(e);
     }
 
     return JSObject.newFunction(name, mh);
@@ -108,13 +108,14 @@ public final class ByteCodeRewriter {
            FieldAssignment _, MethodCall _ -> {
         // do nothing
       }
-    };
+    }
+    ;
   }
 
   private static Handle bsm(String name, Class<?> returnType, Class<?>... parameterTypes) {
-      return new Handle(H_INVOKESTATIC,
-              RT_NAME, name,
-              MethodType.methodType(returnType, parameterTypes).toMethodDescriptorString(), false);
+    return new Handle(H_INVOKESTATIC,
+            RT_NAME, name,
+            MethodType.methodType(returnType, parameterTypes).toMethodDescriptorString(), false);
   }
 
   private static final String JSOBJECT = JSObject.class.getName().replace('.', '/');
@@ -131,7 +132,7 @@ public final class ByteCodeRewriter {
   private static final Handle BSM_METHODCALL = bsm("bsm_methodcall", CallSite.class, Lookup.class, String.class, MethodType.class);
 
   private static void visit(Expr expression, JSObject env, MethodVisitor mv, FunDictionary dictionary) {
-    switch(expression) {
+    switch (expression) {
       case Block(List<Expr> exprs, int lineNumber) -> {
         // for each expression
         for (var expr : exprs) {
@@ -165,7 +166,7 @@ public final class ByteCodeRewriter {
         // visit the qualifier
         visit(qualifier, env, mv, dictionary);
         // load "this"
-        var undefined = new ConstantDynamic("undefined", "Ljava/lang/Object;",  BSM_UNDEFINED);
+        var undefined = new ConstantDynamic("undefined", "Ljava/lang/Object;", BSM_UNDEFINED);
         mv.visitLdcInsn(undefined);
         for (var arg : args) {
           // for each argument, visit it
@@ -173,7 +174,7 @@ public final class ByteCodeRewriter {
         }
         // generate an invokedynamic
         var desc = "(" + "Ljava/lang/Object;".repeat(args.size() + 2) + ")Ljava/lang/Object;";
-        mv.visitInvokeDynamicInsn("call", desc, BSM_METHODCALL);
+        mv.visitInvokeDynamicInsn("call", desc, BSM_FUNCALL);
       }
       case VarAssignment(String name, Expr expr, boolean declaration, int lineNumber) -> {
         // visit the expression
@@ -224,15 +225,32 @@ public final class ByteCodeRewriter {
         // visit the condition
         visit(condition, env, mv, dictionary);
         // generate an invokedynamic to transform an Object to a boolean using BSM_TRUTH
+        mv.visitInvokeDynamicInsn("truth", "(Ljava/lang/Object;)Z", BSM_TRUTH);
+        var isFalseLabel = new Label();
+        mv.visitJumpInsn(IFEQ, isFalseLabel);
         // visit the true block
+        visit(trueBlock, env, mv, dictionary);
+        var endLabel = new Label();
+        mv.visitJumpInsn(GOTO, endLabel);
         // visit the false block
+        mv.visitLabel(isFalseLabel);
+        visit(falseBlock, env, mv, dictionary);
+        mv.visitLabel(endLabel);
       }
       case ObjectLiteral(Map<String, Expr> initMap, int lineNumber) -> {
-        throw new UnsupportedOperationException("TODO ObjectLiteral");
         // call newObject with an INVOKESTATIC
+        mv.visitInsn(ACONST_NULL);
+        var desc = "(L" + JSOBJECT + ";)L" + JSOBJECT + ";";
+        mv.visitMethodInsn(INVOKESTATIC, JSOBJECT, "newObject", desc, false);
         // for each initialization expression
+        initMap.forEach((fieldName, expr) -> {
+          mv.visitInsn(DUP);
           // generate a string with the key
+          mv.visitLdcInsn(fieldName);
           // call register on the JSObject
+          visit(expr, env, mv, dictionary);
+          mv.visitMethodInsn(INVOKEVIRTUAL, JSOBJECT, "register", "(Ljava/lang/String;Ljava/lang/Object;)V", false);
+        });
       }
       case FieldAccess(Expr receiver, String name, int lineNumber) -> {
         throw new UnsupportedOperationException("TODO FieldAccess");
@@ -248,7 +266,7 @@ public final class ByteCodeRewriter {
         throw new UnsupportedOperationException("TODO MethodCall");
         // visit the receiver
         // for each argument
-          // visit the argument
+        // visit the argument
         // generate an invokedynamic that call BSM_METHODCALL
       }
     }

@@ -21,6 +21,7 @@ import fr.umlv.smalljs.rt.JSObject;
 
 public final class RT {
   private static final MethodHandle LOOKUP_OR_DEFAULT, LOOKUP_OR_FAIL, REGISTER, INVOKE, TRUTH, LOOKUP_MH;
+
   static {
     var lookup = MethodHandles.lookup();
     try {
@@ -68,12 +69,73 @@ public final class RT {
   }
 
   public static CallSite bsm_funcall(Lookup lookup, String name, MethodType type) {
-    // get INVOKE method handle
-    var invoke = INVOKE;
-    // make it accept an Object (not a JSObject) and objects as other parameters
-    var target = invoke.asType(type);
-    // create a constant callsite
-    return new ConstantCallSite(target);
+//    // get INVOKE method handle
+//    var invoke = INVOKE;
+//    // make it accept an Object (not a JSObject) and objects as other parameters
+//    var target = invoke.asType(type);
+//    // create a constant callsite
+//    return new ConstantCallSite(target);
+    return new InliningCache(type, InliningCache.MAX_DEPTH, null);
+  }
+
+  private static class InliningCache extends MutableCallSite {
+    private static final MethodHandle SLOW_PATH, TEST;
+    private static final int MAX_DEPTH = 3;
+
+    static {
+      var lookup = MethodHandles.lookup();
+      try {
+        SLOW_PATH = lookup.findVirtual(InliningCache.class, "slowPath", methodType(MethodHandle.class, Object.class, Object.class));
+        TEST = lookup.findStatic(InliningCache.class, "test", methodType(boolean.class, Object.class, Object.class));
+      } catch (NoSuchMethodException | IllegalAccessException e) {
+        throw new AssertionError(e);
+      }
+    }
+
+    private final int depth;
+    private final InliningCache root;
+
+    public InliningCache(MethodType type, int depth, InliningCache root) {
+      this.depth = depth;
+      super(type);
+      this.root = root == null ? this : root;
+      setTarget(MethodHandles.foldArguments(MethodHandles.exactInvoker(type), SLOW_PATH.bindTo(this)));
+    }
+
+    private static boolean test(Object qualifier, Object expected) {
+      return qualifier == expected;
+    }
+
+    private MethodHandle slowPath(Object qualifier, Object receiver) {
+      var jsObject = (JSObject) qualifier;
+      var mh = jsObject.methodHandle();
+
+      System.err.println("jsobject: " + jsObject.name());
+
+      if (!mh.isVarargsCollector() && type().parameterCount() != mh.type().parameterCount() + 1) {
+        throw new Failure("wrong number of arguments for " + (mh.type().parameterCount() - 1)
+                + " expected " + (type().parameterCount() - 2));
+      }
+
+      var target = MethodHandles.dropArguments(mh, 0, Object.class);
+      target = target.withVarargs(mh.isVarargsCollector());
+      target = target.asType(type());
+
+      if (depth == MAX_DEPTH) {
+        System.err.println("deoptimize " + depth);
+        root.setTarget(INVOKE.asType(type()));
+        return target;
+      }
+
+      var test = MethodHandles.insertArguments(TEST, 1, jsObject);
+
+      var fallback = new InliningCache(type(), depth + 1, root).dynamicInvoker();
+
+      var guard = MethodHandles.guardWithTest(test, target, fallback);
+      setTarget(guard);
+
+      return target;
+    }
   }
 
   public static Object bsm_fun(Lookup lookup, String name, Class<?> type, int funId) {
@@ -101,10 +163,12 @@ public final class RT {
   private static boolean truth(Object o) {
     return o != null && o != UNDEFINED && o != Boolean.FALSE;
   }
+
   public static CallSite bsm_truth(Lookup lookup, String name, MethodType type) {
-    throw new UnsupportedOperationException("TODO bsm_truth");
     // get the TRUTH method handle
+    var target = TRUTH;
     // create a constant callsite
+    return new ConstantCallSite(target);
   }
 
   public static CallSite bsm_get(Lookup lookup, String name, MethodType type, String fieldName) {
