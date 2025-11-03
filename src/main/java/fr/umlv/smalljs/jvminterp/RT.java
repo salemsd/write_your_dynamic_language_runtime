@@ -228,15 +228,23 @@ public final class RT {
       // fast access
       var layout = jsObject.layout();
       var slot = jsObject.layoutSlot(fieldName);   // may be -1 !
+      MethodHandle target;
+      Object value;
       if (slot == -1) {
-        return UNDEFINED;
+        value = UNDEFINED;
+        target = MethodHandles.dropArguments(
+                MethodHandles.constant(Object.class, UNDEFINED),
+                0,
+                Object.class
+        );
+      } else {
+        value = jsObject.fastAccess(slot);
+        target = MethodHandles.insertArguments(FAST_ACCESS, 1, slot)
+                .asType(type());
       }
-      var value = jsObject.fastAccess(slot);
 
       var test = MethodHandles.insertArguments(LAYOUT_CHECK, 1, layout)
               .asType(methodType(boolean.class, Object.class));
-      var target = MethodHandles.insertArguments(FAST_ACCESS, 1, slot)
-              .asType(type());
       var guardWithTest = guardWithTest(test, target,
               new InliningFieldCache(type(), fieldName).dynamicInvoker()
       );
