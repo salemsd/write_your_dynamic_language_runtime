@@ -253,14 +253,17 @@ public final class ByteCodeRewriter {
         });
       }
       case FieldAccess(Expr receiver, String name, int lineNumber) -> {
-        throw new UnsupportedOperationException("TODO FieldAccess");
         // visit the receiver
+        visit(receiver, env, mv, dictionary);
         // generate an invokedynamic that goes a get through BSM_GET
+        mv.visitInvokeDynamicInsn("get", "(Ljava/lang/Object;)Ljava/lang/Object;", BSM_GET, name);
       }
       case FieldAssignment(Expr receiver, String name, Expr expr, int lineNumber) -> {
-        throw new UnsupportedOperationException("TODO FieldAssignment");
         // visit the receiver
+        visit(receiver, env, mv, dictionary);
         // visit the expression
+        visit(expr, env, mv, dictionary);
+        mv.visitInvokeDynamicInsn("set", "(Ljava/lang/Object;Ljava/lang/Object;)V", BSM_SET, name);
       }
       case MethodCall(Expr receiver, String name, List<Expr> args, int lineNumber) -> {
         throw new UnsupportedOperationException("TODO MethodCall");
