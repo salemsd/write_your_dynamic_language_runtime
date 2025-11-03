@@ -171,6 +171,7 @@ public final class RT {
     return new ConstantCallSite(target);
   }
 
+  /*
   public static CallSite bsm_get(Lookup lookup, String name, MethodType type, String fieldName) {
     // get the LOOKUP_OR_DEFAULT method handle
     var mh = LOOKUP_OR_DEFAULT;
@@ -180,6 +181,69 @@ public final class RT {
     target = target.asType(type);
     // create a constant callsite
     return new ConstantCallSite(target);
+  }
+   */
+
+  public static CallSite bsm_get(Lookup lookup, String name, MethodType type, String fieldName) {
+    //return new ConstantCallSite(insertArguments(LOOKUP, 1, fieldName).asType(type));
+    return new InliningFieldCache(type, fieldName);
+  }
+
+  private static final class InliningFieldCache extends MutableCallSite {
+    private static final MethodHandle SLOW_PATH, LAYOUT_CHECK, FAST_ACCESS;
+
+    static {
+      var lookup = MethodHandles.lookup();
+      try {
+        SLOW_PATH = lookup.findVirtual(InliningFieldCache.class, "slowPath",
+                methodType(Object.class, Object.class));
+        FAST_ACCESS = lookup.findVirtual(JSObject.class, "fastAccess",
+                methodType(Object.class, int.class));
+        LAYOUT_CHECK = lookup.findStatic(InliningFieldCache.class, "layoutCheck",
+                methodType(boolean.class, JSObject.class, Object.class));
+      } catch (NoSuchMethodException | IllegalAccessException e) {
+        throw new AssertionError(e);
+      }
+    }
+
+    private final String fieldName;
+
+    public InliningFieldCache(MethodType type, String fieldName) {
+      super(type);
+      this.fieldName = fieldName;
+      setTarget(SLOW_PATH.bindTo(this));
+    }
+
+    private static boolean layoutCheck(JSObject jsObject, Object expectedLayout) {
+      return jsObject.layout() == expectedLayout;
+    }
+
+    @SuppressWarnings("unused")  // called by a MH
+    private Object slowPath(Object receiver) {
+      var jsObject = (JSObject) receiver;
+
+      // classical access to the value
+//      var value = jsObject.lookupOrDefault(fieldName, UNDEFINED);
+
+      // fast access
+      var layout = jsObject.layout();
+      var slot = jsObject.layoutSlot(fieldName);   // may be -1 !
+      if (slot == -1) {
+        return UNDEFINED;
+      }
+      var value = jsObject.fastAccess(slot);
+
+      var test = MethodHandles.insertArguments(LAYOUT_CHECK, 1, layout)
+              .asType(methodType(boolean.class, Object.class));
+      var target = MethodHandles.insertArguments(FAST_ACCESS, 1, slot)
+              .asType(type());
+      var guardWithTest = guardWithTest(test, target,
+              new InliningFieldCache(type(), fieldName).dynamicInvoker()
+      );
+      setTarget(guardWithTest);
+
+      return value;
+    }
   }
 
   public static CallSite bsm_set(Lookup lookup, String name, MethodType type, String fieldName) {
