@@ -489,7 +489,6 @@ public class JVMInterpreterTests {
     }
   }
 
-  /*
   @Nested
   public class Q17 {
     @Test
@@ -545,5 +544,6 @@ public class JVMInterpreterTests {
                   """));
     }
   }
+  /*
   */
 }

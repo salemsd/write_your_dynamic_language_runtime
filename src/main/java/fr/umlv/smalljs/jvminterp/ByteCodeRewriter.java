@@ -123,6 +123,7 @@ public final class ByteCodeRewriter {
   private static final Handle BSM_UNDEFINED = bsm("bsm_undefined", Object.class, Lookup.class, String.class, Class.class);
   private static final Handle BSM_CONST = bsm("bsm_const", Object.class, Lookup.class, String.class, Class.class, int.class);
   private static final Handle BSM_FUNCALL = bsm("bsm_funcall", CallSite.class, Lookup.class, String.class, MethodType.class);
+  private static final Handle BSM_GLOBALCALL = bsm("bsm_globalcall", CallSite.class, Lookup.class, String.class, MethodType.class, String.class);
   private static final Handle BSM_LOOKUP = bsm("bsm_lookup", CallSite.class, Lookup.class, String.class, MethodType.class, String.class);
   private static final Handle BSM_FUN = bsm("bsm_fun", Object.class, Lookup.class, String.class, Class.class, int.class);
   private static final Handle BSM_REGISTER = bsm("bsm_register", CallSite.class, Lookup.class, String.class, MethodType.class, String.class);
@@ -163,10 +164,24 @@ public final class ByteCodeRewriter {
         mv.visitLdcInsn(constant);
       }
       case Call(Expr qualifier, List<Expr> args, int lineNumber) -> {
+        var undefined = new ConstantDynamic("undefined", "Ljava/lang/Object;", BSM_UNDEFINED);
+        if (qualifier instanceof Identifier identifier
+                && env.lookupOrDefault(identifier.name(), null) == null) {
+
+          mv.visitLdcInsn(undefined);
+          for (var arg : args) {
+            // for each argument, visit it
+            visit(arg, env, mv, dictionary);
+          }
+          // generate an invokedynamic
+          var desc = "(" + "Ljava/lang/Object;".repeat(args.size() + 1) + ")Ljava/lang/Object;";
+          mv.visitInvokeDynamicInsn("globalcall", desc, BSM_GLOBALCALL, identifier.name());
+          return;
+        }
+
         // visit the qualifier
         visit(qualifier, env, mv, dictionary);
         // load "this"
-        var undefined = new ConstantDynamic("undefined", "Ljava/lang/Object;", BSM_UNDEFINED);
         mv.visitLdcInsn(undefined);
         for (var arg : args) {
           // for each argument, visit it

@@ -138,6 +138,65 @@ public final class RT {
     }
   }
 
+  public static CallSite bsm_globalcall(Lookup lookup, String name, MethodType type, String identifierName) {
+//    var classLoader = (FunClassLoader) lookup.lookupClass().getClassLoader();
+//    var globalEnv = classLoader.global();
+//
+//    var function = globalEnv.lookupOrDefault(identifierName, null);
+//    var mh = ((JSObject) function).methodHandle();
+//
+//    return new ConstantCallSite(mh.asType(type));
+    var classLoader = (FunClassLoader) lookup.lookupClass().getClassLoader();
+    var globalEnv = classLoader.global();
+
+    return new GlobalEnvInliningCache(type, globalEnv, identifierName);
+  }
+
+  private static final class GlobalEnvInliningCache extends MutableCallSite {
+    private static final MethodHandle SLOW_PATH;
+
+    static {
+      var lookup = MethodHandles.lookup();
+      try {
+        SLOW_PATH = lookup.findVirtual(GlobalEnvInliningCache.class, "slowPath", methodType(MethodHandle.class));
+      } catch (NoSuchMethodException | IllegalAccessException e) {
+        throw new AssertionError(e);
+      }
+    }
+
+    private final JSObject globalEnv;
+    private final String identifierName;
+    private final MethodHandle fallback;
+
+    private GlobalEnvInliningCache(MethodType type, JSObject globalEnv, String identifierName) {
+      this.globalEnv = globalEnv;
+      this.identifierName = identifierName;
+      super(type);
+      this.fallback = MethodHandles.foldArguments(MethodHandles.exactInvoker(type), SLOW_PATH.bindTo(this));
+      setTarget(fallback);
+    }
+
+    @SuppressWarnings("unused")  // called by a MH
+    private MethodHandle slowPath() {
+      var function = globalEnv.lookupOrDefault(identifierName, null);
+      if (function == null) {
+        throw new Failure("Function not found: " + identifierName);
+      }
+
+      var jsObject = (JSObject) function;
+      var mh = jsObject.methodHandle();
+      if (!mh.isVarargsCollector() && type().parameterCount() != mh.type().parameterCount()) {
+        throw new Failure("Wrong number of arguments for " + (mh.type().parameterCount() - 1) + " expected " + (type().parameterCount() - 1));
+      }
+
+      var target = mh.asType(type());
+      var switchPoint = globalEnv.switchPoint();
+      var guard = switchPoint.guardWithTest(target, fallback);
+      setTarget(guard);
+      return mh.asType(type());
+    }
+  }
+
   public static Object bsm_fun(Lookup lookup, String name, Class<?> type, int funId) {
     var classLoader = (FunClassLoader) lookup.lookupClass().getClassLoader();
     var globalEnv = classLoader.global();
