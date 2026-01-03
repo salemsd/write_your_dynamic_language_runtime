@@ -193,7 +193,7 @@ public final class RT {
       var switchPoint = globalEnv.switchPoint();
       var guard = switchPoint.guardWithTest(target, fallback);
       setTarget(guard);
-      return mh.asType(type());
+      return target;
     }
   }
 
